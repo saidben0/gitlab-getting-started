@@ -1,0 +1,274 @@
+### https://www.youtube.com/watch?v=PGyhBwLyK2U
+### code > /home/saidben/tutorials/gitlab/freecodecamp-gitlab-ci
+### NOTES > https://gitlab.com/gitlab-course-public/freecodecamp-gitlab-ci/-/blob/main/docs/course-notes.md
+### basic Code > /home/saidben/tutorials/gitlab/gitlab-test-project
+### https://gitlab.aws.dev/saidben/freecodecamp-gitlab-ci
+
+### basic structure of gitlab-ci.yml pipeline file
+---
+stages:
+  - build
+  - test
+
+build laptop:
+    image: alpine
+    stage: build
+    script:
+        - echo "building a laptop"
+        - mkdir build
+        - touch build/computer.txt
+        - echo "Mainboard" > build/computer.txt
+        - cat build/computer.txt
+        - echo "Keyboard" >> build/computer.txt
+        - cat build/computer.txt
+
+test laptop:
+    image: alpine:latest
+    stage: test
+    script:
+        - test -f build/computer.txt
+
+
+### Use artifacts to pass data between pipeline stages
+---
+stages:
+  - build
+  - test
+
+build laptop:
+    image: alpine:latest
+    stage: build
+    script:
+        - echo "building a laptop"
+        - mkdir build
+        - touch build/computer.txt
+        - echo "Mainboard" > build/computer.txt
+        - cat build/computer.txt
+        - echo "Keyboard" >> build/computer.txt
+        - cat build/computer.txt
+    artifacts: # use artifacts to save the output of the build stage into gitlab server(coordinator)
+      paths:
+        - build
+
+# good practice to test your build
+# test stage fails if, for instance, grep does not find "Mainboard"
+test laptop:  # checks if the artifacts of build stage exists
+    image: alpine:latest
+    stage: test
+    script:
+        - test -f build/computer.txt
+        - grep "Mainboard" build/computer.txt
+        - grep "Keyboard" build/computer.txt
+
+
+
+### using local variables
+---
+stages:
+  - build
+  - test
+
+build laptop:
+    image: alpine:latest
+    stage: build
+    variables:
+        build_file_name: laptop.txt
+    script:
+        - echo "building a laptop"
+        - mkdir build
+        - touch build/${build_file_name}
+        - echo "Mainboard" > build/${build_file_name}
+        - cat build//${build_file_name}
+        - echo "Keyboard" >> build/${build_file_name}
+        - cat build/${build_file_name}
+    artifacts: # use artifacts to save the output of the build stage into gitlab server(coordinator)
+      paths:
+        - build
+
+# good practice to test your build
+# test stage fails if, for instance, grep does not find "Mainboard"
+test laptop:  # checks if the artifacts of build stage exists
+    image: alpine:latest
+    stage: test
+    variables:
+        build_file_name: laptop.txt
+    script:
+        - test -f build/${build_file_name}
+        - grep "Mainboard" build/${build_file_name}
+        - grep "Keyboard" build/${build_file_name}
+
+
+
+### Add '.' to disable a pipeline stage
+---
+.test website:
+    image: node:16-alpine3.15
+    stage: test
+    script:
+      - yarn global add serve
+      - apk add curl
+      - serve -s build & # start server in the background from the build for testing
+
+### creating a pipeline with 'build > test' stages
+### you can define a variable 'build_file' at global or stage scope
+### you can specify the docker image to be used by gitlab runner at global or stage scope
+### .pre is pre-stage that runs 1st to set up env inside the container that will be executing the
+### stages defined in the pipeline
+---
+stages:
+    - .pre
+    - build
+    - test
+
+variables:
+    build_file: index.html
+
+build website:
+    image: node:16-alpine3.15
+    stage: build
+    script:
+        - yarn install
+        - yarn build
+    artifacts:
+        paths:
+          - build
+
+linter:
+    image: node:16-alpine3.15
+    stage: .pre
+    script:
+        - yarn install
+        - yarn lint
+
+test website:
+    image: alpine
+    stage: test
+    script:
+      - test -f build/${build_file}
+
+unit tests:
+    image: node:16-alpine3.15
+    stage: test
+    script:
+        - yarn install
+        - yarn test
+
+
+### the above pipeline can be re-strucured (consolidated as below)
+---
+stages:
+    - build
+    - test
+
+variables:
+    build_file: index.html
+
+build website:
+    image: node:16-alpine3.15
+    stage: build
+    script:
+        - yarn install
+        - yarn lint  # moved from .pre stage
+        - yarn test  # moved from unit-test stage
+        - yarn build
+    artifacts:
+        paths:
+          - build
+
+test website:
+    image: node:16-alpine3.15
+    stage: test
+    script:
+      - yarn global add serve
+      - apk add curl
+      - serve -s build & # start server in the background from the build for testing
+      - sleep 10  # wait for the server to be up
+      # hit the web server that was started by the above command
+      # the grep for the keyword which is part of the index.html page
+      - curl http://localhost:3000 | grep -i "React App"
+
+
+
+### if you are deploying to AWS, you can add the env variables (access, secret key, &region)
+### from 'CI/CD Settings > Variables' page
+### 'Protected' variable means that it will be only avaialable to protected branches (i.e-main/master)
+### A branch becomes protected when its Merge Requests requires 'APPROVAL'
+### here, we defined AWS_S3_BUCKET, AWS3_KEY_ID, AWS3_KEY_SECRET, & AWS_REGION as env var
+### from 'CI/CD Settings > vaiables'
+---
+deploy to s3:
+    stage: deploy
+    image: 
+        name: amazon/aws-cli:2.6.4
+        entrypoint:  [""]  # overwriting entrypoint of the image
+    script:
+        - aws --version
+        - echo "hello s3" > ./test.txt
+        - cat ./test.txt
+        - aws s3 cp test.txt s3://${AWS_S3_BUCKET}/test.txt  # env var 'AWS_S3_BUCKET' is defined in 'CI/CD Settings > Variables'
+
+## sync the content of the build dir of our app into s3-bucket
+---
+deploy to s3:
+    stage: deploy
+    image: 
+        name: amazon/aws-cli:2.6.4
+        entrypoint:  [""]  # overwriting entrypoint of the image
+    script:
+        - aws --version
+        # sync our build dir into s3; '--delete' flag removes files that were created as part of the build pipeline
+        # which are not part of the build directory
+        - aws s3 sync build s3://${AWS_S3_BUCKET} --delete
+
+
+### add rule to only add the deploy stage to the pipleine run if the current branch is the default branch
+### you can configure the default branch (main/master/etc) as needed
+---
+deploy to s3:
+    stage: deploy
+    image: 
+        name: amazon/aws-cli:2.6.4
+        entrypoint:  [""]  # overwriting entrypoint of the image
+    # use rules:if clauses to specify when to add a job to a pipeline
+    rules:
+        # $CI_COMMIT_REF_NAME refers to the current branch
+        #- if: $CI_COMMIT_REF_NAME == main
+        # only add this job to the pipeline if the current branch is the default branch (i.e- main/master, etc.)
+        - if: $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH  # you configure default branch from CI/CD settings
+    script:
+        - aws --version
+        - env
+        - echo $CI_COMMIT_REF_NAME
+
+        # sync our build dir into s3; '--delete' flag removes files that were created as part of the build pipeline
+        # which are not part of the build directory
+        - aws s3 sync build s3://${AWS_S3_BUCKET} --delete
+
+
+### print the env variables available in the gitlab container
+---
+build website:
+    image: node:16-alpine3.15
+    stage: build
+    script:
+        - yarn install
+        - yarn lint
+        - yarn test
+        - yarn build
+        - env # print the env variables available in the gitlab container
+        - echo $CI_COMMIT_REF_NAME
+    artifacts:
+        paths:
+          - build
+
+### adding post deployment stage to test the build
+---
+# test if the deployment is successfull
+production tests:
+    stage: post deploy
+    image: curlimages/curl
+    script:
+      # this should be the url of your web app that was deployed in deploy stage
+      - curl ${APP_BASE_URL} | grep -i "Amazon"
+
+

@@ -1,0 +1,76 @@
+stages:
+    - build
+    - package
+    - test
+    - deploy
+
+variables:
+    APP_VERSION: $CI_PIPELINE_IID
+
+build website:
+    image: node:16-alpine
+    stage: build
+    script:
+        - yarn install
+        - yarn lint
+        - yarn test
+        - yarn build
+        - echo $APP_VERSION > build/version.html
+    artifacts:
+        paths:
+            - build
+
+build docker image:
+    stage: package
+    image: docker:20.10.12
+    services:
+        - docker:20.10.12-dind
+    script:
+        - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER $CI_REGISTRY --password-stdin
+        - docker build -t $CI_REGISTRY_IMAGE -t $CI_REGISTRY_IMAGE:$APP_VERSION .
+        - docker image ls
+        - docker push --all-tags $CI_REGISTRY_IMAGE
+
+test docker image:
+    stage: test
+    image: curlimages/curl
+    services:
+        - name: $CI_REGISTRY_IMAGE:$APP_VERSION
+          alias: website
+    script:
+        - curl http://website/version.html | grep $APP_VERSION
+
+deploy to production:
+    image:
+        name: amazon/aws-cli:2.4.11
+        entrypoint: [""]
+    stage: deploy
+    variables:
+        APP_NAME: My website
+        APP_ENV_NAME: Mywebsite-env
+    # this tells gitlab which environment vars to use (prod, dev)
+    # whatever envs you defined in deploy>envs gitlab ui
+    environment: production
+    script:
+        - aws --version
+        - yum install -y gettext
+        # 'tr -d "\n"' used to remove any spaces
+        # $GITLAB_DEPLOY_TOKEN is created from gitalb vars UI that gives aws access to gitlab docker private reg
+        - export DEPLOY_TOKEN=$(echo $GITLAB_DEPLOY_TOKEN | tr -d "\n" | base64)
+        # envsubst is taking 'templates/Dockerrun.aws.json' as input
+        # envsubst replaces the var referenced inside 'templates/Dockerrun.aws.json' with their values
+        # envsubst outputs 'Dockerrun.aws.json' in pwd with the vars substituted
+        - envsubst < templates/Dockerrun.aws.json > Dockerrun.aws.json
+        - envsubst < templates/auth.json > auth.json
+        - cat Dockerrun.aws.json
+        - cat auth.json
+        # $AWS_S3_BUCKET is defined in the gitlab UI vars
+        # $AWS_S3_BUCKET is the url of the s3 prod bucket created by beanstack when we created the application env
+        - aws s3 cp Dockerrun.aws.json s3://$AWS_S3_BUCKET/Dockerrun.aws.json
+        - aws s3 cp auth.json s3://$AWS_S3_BUCKET/auth.json
+        - aws elasticbeanstalk create-application-version --application-name "$APP_NAME" --version-label $APP_VERSION --source-bundle S3Bucket=$AWS_S3_BUCKET,S3Key=Dockerrun.aws.json
+        - aws elasticbeanstalk update-environment --application-name "$APP_NAME" --version-label $APP_VERSION --environment-name $APP_ENV_NAME
+        # wait for ebs update to complete
+        - aws elasticbeanstalk wait environment-updated --application-name "$APP_NAME" --version-label $APP_VERSION --environment-name $APP_ENV_NAME
+        # $CI_ENVIRONMENT_URL is a predefined var that stores the env url
+        - curl $CI_ENVIRONMENT_URL/version.html | grep $APP_VERSION
