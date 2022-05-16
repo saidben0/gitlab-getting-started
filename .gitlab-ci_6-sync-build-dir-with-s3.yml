@@ -1,0 +1,43 @@
+stages:
+    - build
+    - test
+    - deploy
+
+variables:
+    build_file: index.html
+
+build website:
+    image: node:16-alpine3.15
+    stage: build
+    script:
+        - yarn install
+        - yarn lint  # moved from .pre stage
+        - yarn test  # moved from unit-test stage
+        - yarn build
+    artifacts:
+        paths:
+          - build
+
+test website:
+    image: node:16-alpine3.15
+    stage: test
+    script:
+      - yarn global add serve
+      - apk add curl
+      - serve -s build & # start server in the background from the build for testing
+      - sleep 10  # wait for the server to be up
+      # hit the web server that was started by the above command
+      # the grep for the keyword which is part of the index.html page
+      - curl http://localhost:3000 | grep -i "React App"
+
+deploy to s3:
+    stage: deploy
+    image: 
+        name: amazon/aws-cli:2.6.4
+        entrypoint:  [""]  # overwriting entrypoint of the image
+    script:
+        - aws --version
+        # sync our build dir into s3; '--delete' flag removes files that were created as part of the build pipeline
+        # which are not part of the build directory
+        - aws s3 sync build s3://${AWS_S3_BUCKET} --delete
+

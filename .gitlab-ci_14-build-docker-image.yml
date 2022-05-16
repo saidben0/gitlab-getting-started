@@ -1,0 +1,47 @@
+stages:
+    - build
+    - package
+
+
+variables:
+  # CI_PIPELINE_ID is a pre-defined var that we can use as an application version for each deployment
+  APP_VERSION: $CI_PIPELINE_ID
+  FILE_NAME: version.html
+
+build website:
+    image: node:16-alpine3.15
+    stage: build
+    script:
+        - yarn install
+        - yarn lint  # moved from .pre stage
+        - yarn test  # moved from unit-test stage
+        - yarn build
+        - echo $APP_VERSION > build/$FILE_NAME
+    artifacts:
+        paths:
+          - build
+
+build docker image:
+    stage: package
+    image: docker:20.10.12
+    variables:
+        # Tell docker CLI how to talk to Docker daemon.
+        DOCKER_HOST: tcp://dockerdaemon:2375/
+        # Use the overlayfs driver for improved performance.
+        DOCKER_DRIVER: overlay2
+        # Disable TLS since we're running inside local network.
+        DOCKER_TLS_CERTDIR: ""
+    services:
+        # use this image to start docker svc inside docker
+        - docker:20.10.12-dind
+    script:
+        - pwd
+        - ls
+        - uname -s
+        - which docker
+        - docker ps -a
+         # creating two tags for the image that we are building
+         # one for latest and the other uses the app version
+        - docker build -t $CI_REGISTRY_IMAGE -t ${CI_REGISTRY_IMAGE}:${APP_VERSION} .
+        - docker image ls
+        - docker ps -a

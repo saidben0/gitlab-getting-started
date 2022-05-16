@@ -1,0 +1,30 @@
+stages:
+    - build
+    - test
+
+variables:
+    build_file: index.html
+
+build website:
+    image: node:16-alpine3.15
+    stage: build
+    script:
+        - yarn install
+        - yarn lint  # moved from .pre stage
+        - yarn test  # moved from unit-test stage
+        - yarn build
+    artifacts:
+        paths:
+          - build
+
+test website:
+    image: node:16-alpine3.15
+    stage: test
+    script:
+      - yarn global add serve
+      - apk add curl
+      - serve -s build & # start server in the background from the build for testing
+      - sleep 10  # wait for the server to be up
+      # hit the web server that was started by the above command
+      # the grep for the keyword which is part of the index.html page
+      - curl http://localhost:3000 | grep -i "React App"

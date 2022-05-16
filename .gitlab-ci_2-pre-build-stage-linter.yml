@@ -1,0 +1,40 @@
+stages:
+    - .pre
+    - build
+    - test
+
+variables:
+    build_file: index.html
+
+build website:
+    image: node:16-alpine3.15
+    stage: build
+    script:
+        - yarn install
+        - yarn build
+    artifacts:
+        paths:
+          - build
+
+linter:
+    image: node:16-alpine3.15
+    stage: .pre
+    script:
+        - yarn install
+        - yarn lint
+
+test website:
+    image: alpine
+    stage: test
+    script:
+      - test -f build/${build_file}
+
+unit tests:
+    image: node:16-alpine3.15
+    stage: test
+    script:
+        - yarn install
+        - yarn test
+
+
+

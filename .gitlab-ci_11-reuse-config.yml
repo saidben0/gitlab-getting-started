@@ -1,0 +1,66 @@
+stages:
+    - build
+    - test
+    - deploy to staging
+    - deploy to prod
+
+build website:
+    image: node:16-alpine3.15
+    stage: build
+    script:
+        - yarn install
+        - yarn lint  # moved from .pre stage
+        - yarn test  # moved from unit-test stage
+        - yarn build
+        - env
+        - echo $CI_COMMIT_REF_NAME
+    artifacts:
+        paths:
+          - build
+
+test website:
+    image: node:16-alpine3.15
+    stage: test
+    script:
+      - yarn global add serve
+      - apk add curl
+      - serve -s build & # start server in the background from the build for testing
+      - sleep 10  # wait for the server to be up
+      # hit the web server that was started by the above command
+      # the grep for the keyword which is part of the index.html page
+      - curl http://localhost:3000 | grep -i "React App"
+
+### ${AWS_S3_BUCKET} defined twice in CI/CD Settings/Variables, one for production scope
+### and the other for staging scope
+### ${CI_ENVIRONMENT_URL} is a predefined variable by GitLab
+.deploy:
+    image: 
+        name: amazon/aws-cli:2.6.4
+        entrypoint:  [""]  # overwriting entrypoint of the image
+    # use rules:if clauses to specify when to add a job to a pipeline
+    rules:
+        # $CI_COMMIT_REF_NAME refers to the current branch
+        #- if: $CI_COMMIT_REF_NAME == main
+        # only add this job to the pipeline if the current branch is the default branch (i.e- main/master, etc.)
+        - if: $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH  # you configure default branch from CI/CD settings
+    script:
+        - aws --version
+        # sync our build dir into s3; '--delete' flag removes files that were created as part of the build pipeline
+        # which are not part of the build directory
+        - aws s3 sync build s3://${AWS_S3_BUCKET} --delete
+        - echo ${CI_ENVIRONMENT_URL}
+        - curl ${CI_ENVIRONMENT_URL} | grep -i "Amazon"  # testing the staging url
+
+
+### this stage is re-using '.deploy' configuration defined above
+deploy to staging:
+    stage: deploy to staging
+    environment: staging
+    extends: .deploy
+
+### this stage is re-using '.deploy' configuration defined above
+deploy to prod:
+    stage: deploy to prod
+    environment: production
+    extends: .deploy
+
